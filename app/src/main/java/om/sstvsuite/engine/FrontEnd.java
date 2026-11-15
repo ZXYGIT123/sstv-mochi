@@ -231,7 +231,7 @@ final class FrontEnd {
             d4 = d16;
         }
         double d17 = d4;
-        boolean z = i;
+        boolean z = i != 0;
         double atan2 = Math.atan2(d13, d14);
         if (this.hasPrevPhase) {
             double d18 = atan2 - this.prevPhase;
@@ -277,7 +277,7 @@ final class FrontEnd {
         if (this.decTaps == null) {
             return 0;
         }
-        return (r0.length - 1) / (this.decim * 2);
+        return (this.decTaps.length - 1) / (this.decim * 2);
     }
 
     static int chooseWorkRate(int i) {

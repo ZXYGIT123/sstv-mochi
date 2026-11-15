@@ -192,7 +192,7 @@ public final class WavIO {
         double d2 = 0.0d;
         for (int i3 = 0; i3 < length; i3++) {
             float f = (float) (d2 - ((int) d2));
-            sArr2[i3] = (short) Math.max(-32768.0f, Math.min(32767.0f, (sArr[r5] * (1.0f - f)) + (sArr[Math.min(r5 + 1, sArr.length - 1)] * f)));
+            sArr2[i3] = (short) Math.max(-32768.0f, Math.min(32767.0f, (sArr[(int) d2] * (1.0f - f)) + (sArr[Math.min(((int) d2) + 1, sArr.length - 1)] * f)));
             d2 += d;
         }
         return sArr2;

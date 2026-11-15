@@ -199,17 +199,12 @@ public final class Encoder {
                 }
                 int i24 = (i20 >> i22) & 1;
                 i23 ^= i24;
-                int i25 = i19;
-                if (i24 != i25) {
-                    r10 = 1100;
-                }
-                iArr[i21] = r10;
+                iArr[i21] = i24 != 0 ? 1300 : 1100;
                 iArr2[i21] = round5;
                 i22++;
                 i21++;
-                i19 = i25;
             }
-            iArr[i21] = i23 != i19 ? 1100 : 1300;
+            iArr[i21] = i23 != 0 ? 1300 : 1100;
             int i26 = i21 + 1;
             iArr2[i21] = round5;
             iArr[i26] = 1200;
@@ -265,13 +260,11 @@ public final class Encoder {
             double d = (this.segFreq * TWO_PI) / this.rate;
             int i7 = i2 + i6;
             for (int i8 = 0; i8 < min2; i8++) {
-                sArr[i7 + i8] = (short) (Math.sin(this.phase) * AMP >= 0.0d ? r12 + 0.5d : r12 - 0.5d);
+                double d3v = Math.sin(this.phase) * AMP;
+                sArr[i7 + i8] = (short) (d3v >= 0.0d ? d3v + 0.5d : d3v - 0.5d);
                 this.phase += d;
-                while (true) {
-                    double d2 = this.phase;
-                    if (d2 >= TWO_PI) {
-                        this.phase = d2 - TWO_PI;
-                    }
+                while (this.phase >= TWO_PI) {
+                    this.phase -= TWO_PI;
                 }
             }
             i6 += min2;
@@ -320,11 +313,8 @@ public final class Encoder {
             int i3 = this.emitted;
             int min = Math.min(i - i3, this.segEnd - i3);
             this.phase += ((this.segFreq * TWO_PI) / this.rate) * min;
-            while (true) {
-                double d = this.phase;
-                if (d >= TWO_PI) {
-                    this.phase = d - TWO_PI;
-                }
+            while (this.phase >= TWO_PI) {
+                this.phase -= TWO_PI;
             }
             this.emitted += min;
         }

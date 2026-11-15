@@ -340,7 +340,7 @@ public final class Decoder {
         for (int i4 = 0; i4 < i2; i4++) {
             float f = this.ampRing[(i + i4) & this.ringMask];
             double d3 = (f * f) + 1.0E-9d;
-            d2 += this.freqRing[r7] * d3;
+            d2 += this.freqRing[(i + i4) & this.ringMask] * d3;
             d += d3;
         }
         if (d <= 1.0E-12d) {
@@ -479,7 +479,7 @@ public final class Decoder {
         double d3 = 0.0d;
         for (int i8 = i7; i8 < i4; i8++) {
             double d4 = this.rawRing[(i8 - 1) & this.ringMask];
-            d3 += (r14[i8 & r5] + r14[r5 & (i8 - 2)]) * d4;
+            d3 += (this.rawRing[i8 & this.ringMask] + this.rawRing[this.ringMask & (i8 - 2)]) * d4;
             d2 += d4 * 2.0d * d4;
         }
         double d5 = 1.0E-12d;
@@ -913,7 +913,7 @@ public final class Decoder {
                     float f = this.ampRing[(round + i10) & this.ringMask];
                     int i15 = round2;
                     double d9 = (f * f) + 1.0E-9d;
-                    d8 += d9 * this.freqRing[r1];
+                    d8 += d9 * this.freqRing[(round + i10) & this.ringMask];
                     d7 += d9;
                     i10++;
                     round2 = i15;
@@ -939,7 +939,7 @@ public final class Decoder {
                     double d12 = 0.0d;
                     for (int i19 = round3 + 2; i19 < round4; i19++) {
                         double d13 = this.rawRing[(i19 - 1) & this.ringMask];
-                        d12 += (r15[i19 & r6] + r15[(i19 - 2) & r6]) * d13;
+                        d12 += (this.rawRing[i19 & this.ringMask] + this.rawRing[(i19 - 2) & this.ringMask]) * d13;
                         d11 += 2.0d * d13 * d13;
                     }
                     d = 2800.0d;

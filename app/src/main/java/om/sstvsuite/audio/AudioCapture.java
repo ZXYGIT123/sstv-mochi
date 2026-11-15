@@ -37,58 +37,54 @@ public final class AudioCapture {
                 return false;
             }
             this.running = true;
-            Thread thread = new Thread(new Runnable(this) { // from class: om.sstvsuite.audio.AudioCapture.1
-                final /* synthetic */ AudioCapture this$0;
-
-                {
-                    this.this$0 = this;
-                }
+            final AudioCapture self = this;
+            Thread thread = new Thread(new Runnable() {
 
                 @Override // java.lang.Runnable
                 public void run() {
                     short[] sArr = new short[2048];
-                    AudioRecord audioRecord2 = this.this$0.record;
+                    AudioRecord audioRecord2 = self.record;
                     if (audioRecord2 == null) {
                         return;
                     }
                     try {
                         audioRecord2.startRecording();
                         while (true) {
-                            if (!this.this$0.running) {
+                            if (!self.running) {
                                 break;
                             }
                             try {
                                 int read = audioRecord2.read(sArr, 0, 2048);
-                                if (!this.this$0.running) {
+                                if (!self.running) {
                                     break;
                                 }
                                 if (read > 0) {
                                     try {
-                                        sink.onSamples(this.this$0, sArr, read);
+                                        sink.onSamples(self, sArr, read);
                                     } catch (Throwable th) {
-                                        if (this.this$0.running) {
-                                            this.this$0.safeFailure(sink, th);
+                                        if (self.running) {
+                                            self.safeFailure(sink, th);
                                         }
                                     }
                                 } else if (read < 0) {
-                                    if (this.this$0.running) {
-                                        this.this$0.safeFailure(sink, new IllegalStateException("AudioRecord read error: " + read));
+                                    if (self.running) {
+                                        self.safeFailure(sink, new IllegalStateException("AudioRecord read error: " + read));
                                     }
                                 }
                             } catch (Throwable th2) {
-                                if (this.this$0.running) {
-                                    this.this$0.safeFailure(sink, th2);
+                                if (self.running) {
+                                    self.safeFailure(sink, th2);
                                 }
                             }
                         }
-                        this.this$0.running = false;
+                        self.running = false;
                         try {
                             audioRecord2.stop();
                         } catch (Throwable unused2) {
                         }
                     } catch (Throwable th3) {
-                        this.this$0.running = false;
-                        this.this$0.safeFailure(sink, th3);
+                        self.running = false;
+                        self.safeFailure(sink, th3);
                     }
                 }
             }, "sstv-audio-capture");
