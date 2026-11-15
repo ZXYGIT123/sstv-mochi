@@ -1,6 +1,7 @@
 package om.sstvsuite.ui
 
 import android.content.Context
+import kotlin.jvm.JvmName
 import android.graphics.Bitmap
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -95,19 +96,32 @@ class SettingsState(context: Context) {
             else -> if (dynamicColor) ColorSchemeMode.MonetSystem else ColorSchemeMode.System
         }
 
+    @JvmName("applyAutoDetect")
     fun setAutoDetect(v: Boolean) { autoDetect = v; prefs.setAutoDetect(v) }
+    @JvmName("applyAutoSave")
     fun setAutoSave(v: Boolean) { autoSave = v; prefs.setAutoSave(v) }
+    @JvmName("applyWaterfallVisible")
     fun setWaterfallVisible(v: Boolean) { waterfallVisible = v; prefs.setWaterfallVisible(v) }
+    @JvmName("applyDynamicColor")
     fun setDynamicColor(v: Boolean) { dynamicColor = v; prefs.setDynamicColor(v) }
+    @JvmName("applyNightMode")
     fun setNightMode(v: Int) { nightMode = v; prefs.setNightMode(v) }
+    @JvmName("applySampleRate")
     fun setSampleRate(v: Int) { sampleRate = v; prefs.setDefaultSampleRate(v) }
+    @JvmName("applyLockedModeId")
     fun setLockedModeId(v: String) { lockedModeId = v; prefs.setLockedModeId(v) }
+    @JvmName("applyWatermarkEnabled")
     fun setWatermarkEnabled(v: Boolean) { watermarkEnabled = v; prefs.setWatermarkEnabled(v) }
+    @JvmName("applyWatermarkPosition")
     fun setWatermarkPosition(v: Int) { watermarkPosition = v; prefs.setWatermarkPosition(v) }
+    @JvmName("applyWatermarkSize")
     fun setWatermarkSize(v: Int) { watermarkSize = v; prefs.setWatermarkSize(v) }
+    @JvmName("applyWatermarkColor")
     fun setWatermarkColor(v: Int) { watermarkColor = v; prefs.setWatermarkColor(v) }
+    @JvmName("applyWatermarkStroke")
     fun setWatermarkStroke(v: Boolean) { watermarkStroke = v; prefs.setWatermarkStroke(v) }
     fun watermarkText(context: Context): String = prefs.getWatermarkText(context)
+    @JvmName("applyWatermarkText")
     fun setWatermarkText(text: String) = prefs.setWatermarkText(text)
     fun resetWatermarkText() = prefs.resetWatermarkText()
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
@@ -134,6 +148,7 @@ class EncodeState(val context: Context, val settings: SettingsState) {
     @Volatile private var cancel = false
     private var lastPercent = -1
 
+    @JvmName("applySampleRate")
     fun setSampleRate(rate: Int) {
         sampleRate = rate
         settings.setSampleRate(rate)
@@ -179,6 +194,7 @@ class EncodeState(val context: Context, val settings: SettingsState) {
         return copy
     }
 
+    @JvmName("applyMode")
     fun setMode(next: SstvMode) {
         mode = next
         refreshPreview()
