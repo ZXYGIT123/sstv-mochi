@@ -419,7 +419,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         return list
     }
 
-    fun setEngine(next: DecodeEngine) {
+    fun selectEngine(next: DecodeEngine) {
         if (next == engine) return
         if (receiving || fileDecoding) stop()
         engine = next

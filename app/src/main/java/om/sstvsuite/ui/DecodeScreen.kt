@@ -257,7 +257,7 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
                         subtitle = option.hint,
                         checked = option == state.engine,
                         onClick = {
-                            state.setEngine(option)
+                            state.selectEngine(option)
                             showEngine = false
                         },
                     )
