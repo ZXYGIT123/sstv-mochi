@@ -12,8 +12,8 @@ android {
         applicationId = "om.sstvsuite"
         minSdk = 23
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.0.3-mochi"
+        versionCode = 5
+        versionName = "1.1.0-robot36"
     }
 
     signingConfigs {
@@ -44,6 +44,8 @@ kotlin {
 }
 
 dependencies {
+    // Robot36 的高质量解码器（FFT 解调），由 dex2jar 从 Robot36 2.16 的 dex 反编译打包而来
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

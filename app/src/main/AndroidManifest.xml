@@ -7,7 +7,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
-        android:label="SSTV 收发站"
+        android:label="SSTV 收发站 · Robot36"
         android:theme="@style/Theme.Sstv"
         android:largeHeap="true"
         android:supportsRtl="true">

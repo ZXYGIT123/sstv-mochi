@@ -55,6 +55,7 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
     val scheme = MochiTheme.colorScheme
     var lockExpanded by remember { mutableStateOf(false) }
     var showModes by remember { mutableStateOf(false) }
+    var showEngine by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) state.decodeFile(uri)
@@ -75,12 +76,12 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
             MochiDropdown(
                 expanded = lockExpanded,
                 onExpandedChange = { lockExpanded = it },
-                items = persistentListOf(*state.modes.map { MochiItem(it.name) }.toTypedArray()),
+                items = persistentListOf(*state.lockOptions().map { MochiItem(it.label) }.toTypedArray()),
                 onItemClick = { index ->
-                    state.lockMode(state.modes[index].id)
+                    state.lockMode(state.lockOptions()[index].id)
                     lockExpanded = false
                 },
-                selectedIndex = state.modes.indexOfFirst { it.id == state.lockedModeId },
+                selectedIndex = state.lockOptions().indexOfFirst { it.id == state.lockedModeId },
             ) {
                 MochiIonicon("lock-closed")
             }
@@ -210,8 +211,14 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
         item {
             MochiListCard {
                 MochiListRow(
+                    title = "解码引擎",
+                    subtitle = state.engine.label + " · " + state.engine.hint,
+                    chevron = true,
+                    onClick = { showEngine = true },
+                )
+                MochiListRow(
                     title = "锁定模式",
-                    subtitle = if (state.lockedModeId.isEmpty()) "自动识别 (VIS)" else "已锁定：" + (state.lockedMode()?.name ?: ""),
+                    subtitle = if (state.lockedModeId.isEmpty()) "自动识别 (VIS)" else "已锁定：" + state.lockedLabel(),
                     chevron = true,
                     onClick = { showModes = true },
                 )
@@ -234,6 +241,31 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
         }
     }
 
+    if (showEngine) {
+        MochiDialog(
+            visible = showEngine,
+            onDismissRequest = { showEngine = false },
+            title = "解码引擎",
+            actions = persistentListOf(
+                MochiDialogAction("关闭", MochiDialogActionRole.Cancel),
+            ),
+        ) {
+            Column {
+                DecodeEngine.entries.forEach { option ->
+                    MochiListRow(
+                        title = option.label,
+                        subtitle = option.hint,
+                        checked = option == state.engine,
+                        onClick = {
+                            state.setEngine(option)
+                            showEngine = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+
     if (showModes) {
         MochiDialog(
             visible = showModes,
@@ -248,13 +280,13 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
             ),
         ) {
             Column {
-                state.modes.forEach { mode ->
+                state.lockOptions().forEach { option ->
                     MochiListRow(
-                        title = mode.name,
-                        subtitle = mode.width.toString() + " × " + mode.height,
-                        checked = mode.id == state.lockedModeId,
+                        title = option.label,
+                        subtitle = option.subtitle,
+                        checked = option.id == state.lockedModeId,
                         onClick = {
-                            state.lockMode(mode.id)
+                            state.lockMode(option.id)
                             showModes = false
                         },
                     )

@@ -33,6 +33,7 @@ import om.sstvsuite.image.ImageProcessor
 import om.sstvsuite.image.WatermarkRenderer
 import om.sstvsuite.storage.FileShare
 import om.sstvsuite.storage.MediaStoreSaver
+import xdsopl.robot36.MochiEngine
 import ui.feice.mochi.theme.ColorSchemeMode
 import java.io.File
 import java.text.SimpleDateFormat
@@ -125,6 +126,12 @@ class SettingsState(context: Context) {
     fun setWatermarkText(text: String) = prefs.setWatermarkText(text)
     fun resetWatermarkText() = prefs.resetWatermarkText()
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
+
+    fun lockedLabel(): String = when {
+        lockedModeId.isEmpty() -> "自动识别 (VIS)"
+        lockedModeId == "hffax" -> "HF Fax"
+        else -> lockedMode()?.name ?: lockedModeId
+    }
 }
 
 /** 编码页：选图、水印、实时播放或导出 WAV */
@@ -339,12 +346,49 @@ class EncodeState(val context: Context, val settings: SettingsState) {
     }
 }
 
-/** 解码页：麦克风接收、音频文件解码、保存分享 */
+/** 解码引擎：标准（SSTV 套件，16 个模式）/ 高质量（Robot36 的 FFT 解调器，额外支持 HF Fax） */
+enum class DecodeEngine(val label: String, val hint: String) {
+    Robot36("Robot36 高质量", "FFT 解调 + 逐行对齐，画质更好，支持 HF Fax"),
+    Standard("标准", "SSTV 套件解码器，16 个模式全支持"),
+}
+
+/** SSTV 模式 id ↔ Robot36 解码器模式名（Robot36 用带空格的英文名） */
+object Robot36Modes {
+    private val names: Map<String, String> = mapOf(
+        "martin1" to "Martin 1",
+        "martin2" to "Martin 2",
+        "scottie1" to "Scottie 1",
+        "scottie2" to "Scottie 2",
+        "scottiedx" to "Scottie DX",
+        "sc2_180" to "Wraase SC2\u2013180",
+        "robot36" to "Robot 36 Color",
+        "robot72" to "Robot 72 Color",
+        "pd50" to "PD 50",
+        "pd90" to "PD 90",
+        "pd120" to "PD 120",
+        "pd160" to "PD 160",
+        "pd180" to "PD 180",
+        "pd240" to "PD 240",
+        "pd290" to "PD 290",
+        "hffax" to "HF Fax",
+    )
+
+    fun nameFor(id: String?): String? = if (id.isNullOrEmpty()) null else names[id]
+
+    fun supports(id: String?): Boolean = id.isNullOrEmpty() || names.containsKey(id)
+}
+
+/** 解码页可选锁定的模式（标准引擎来自 ModeRegistry，Robot36 引擎额外多一个 HF Fax） */
+class LockOption(val id: String, val label: String, val subtitle: String)
+
+/** 解码页：麦克风接收、音频文件解码、保存分享；可在两套解码引擎之间切换 */
 class DecodeState(val context: Context, val settings: SettingsState) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     val modes: List<SstvMode> = ModeRegistry.all()
     val waterfall = Waterfall()
 
+    var engine by mutableStateOf(DecodeEngine.Robot36)
+        private set
     var receiving by mutableStateOf(false)
         private set
     var fileDecoding by mutableStateOf(false)
@@ -361,30 +405,60 @@ class DecodeState(val context: Context, val settings: SettingsState) {
 
     private var capture: AudioCapture? = null
     private var decoder: Decoder? = null
+    private var robot: MochiEngine? = null
     private var ticker: Job? = null
     private var lastProgressAt = 0L
     private var lastFrame: Frame? = null
 
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
 
+    fun lockOptions(): List<LockOption> {
+        val list = ArrayList<LockOption>()
+        modes.forEach { list.add(LockOption(it.id, it.name, it.width.toString() + " × " + it.height)) }
+        if (engine == DecodeEngine.Robot36) list.add(LockOption("hffax", "HF Fax", "640 × 1200"))
+        return list
+    }
+
+    fun setEngine(next: DecodeEngine) {
+        if (next == engine) return
+        if (receiving || fileDecoding) stop()
+        engine = next
+        if (next == DecodeEngine.Robot36 && !Robot36Modes.supports(lockedModeId)) {
+            lockedModeId = ""
+            settings.setLockedModeId("")
+            status = "该模式 Robot36 引擎不支持，已切回自动识别"
+        }
+        status = "解码引擎：" + next.label
+    }
+
     fun lockMode(id: String) {
         lockedModeId = id
         settings.setLockedModeId(id)
         decoder?.setLockedMode(lockedMode())
+        robot?.lockMode(Robot36Modes.nameFor(id))
     }
 
     fun start() {
         if (receiving || fileDecoding) return
-        val dec = Decoder(AudioCapture.SAMPLE_RATE, listener)
-        dec.setLockedMode(lockedMode())
-        decoder = dec
         image = null
         lastFrame = null
         modeName = null
         linesDone = 0
-        linesTotal = lockedMode()?.height ?: 0
+        linesTotal = 0
         waterfall.clear()
         waterfallTick++
+        if (engine == DecodeEngine.Robot36) {
+            val r = MochiEngine(AudioCapture.SAMPLE_RATE)
+            r.lockMode(Robot36Modes.nameFor(lockedModeId))
+            robot = r
+            decoder = null
+        } else {
+            val dec = Decoder(AudioCapture.SAMPLE_RATE, listener)
+            dec.setLockedMode(lockedMode())
+            decoder = dec
+            robot = null
+            linesTotal = lockedMode()?.height ?: 0
+        }
         receiving = true
         status = "正在寻找 VIS 信号…"
         val cap = AudioCapture()
@@ -393,7 +467,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
             override fun onSamples(source: AudioCapture?, pcm: ShortArray?, count: Int) {
                 if (pcm == null || count <= 0) return
                 try {
-                    dec.feed(pcm, 0, count)
+                    consume(pcm, count)
                 } catch (t: Throwable) {
                     scope.launch { fail(t) }
                 }
@@ -411,23 +485,83 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         ticker = scope.launch {
             while (true) {
                 delay(64)
-                freq = dec.signalFrequency
-                level = dec.signalLevel
-                if (settings.waterfallVisible) {
-                    waterfall.addSample(dec.signalFrequency, dec.signalLevel)
-                    waterfallTick++
+                val r = robot
+                if (r != null) {
+                    freq = r.peakHz
+                    level = r.peakLevel
+                    if (settings.waterfallVisible) {
+                        waterfall.addSample(r.peakHz, r.peakLevel)
+                        waterfallTick++
+                    }
+                } else {
+                    val dec = decoder ?: continue
+                    freq = dec.signalFrequency
+                    level = dec.signalLevel
+                    if (settings.waterfallVisible) {
+                        waterfall.addSample(dec.signalFrequency, dec.signalLevel)
+                        waterfallTick++
+                    }
                 }
+            }
+        }
+    }
+
+    /** 两种引擎统一入口 */
+    private fun consume(pcm: ShortArray, count: Int) {
+        val r = robot
+        if (r != null) {
+            if (r.feed(pcm, 0, count)) publishRobot(r)
+            return
+        }
+        decoder?.feed(pcm, 0, count)
+    }
+
+    private fun publishRobot(r: MochiEngine) {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressAt < 90 && !r.complete) return
+        lastProgressAt = now
+        val w = r.width
+        val h = r.height
+        val done = r.linesDone
+        val name = r.modeName
+        val bmp = if (w > 0 && h > 0 && done > 0) {
+            try {
+                Bitmap.createBitmap(r.pixels, w, h, Bitmap.Config.ARGB_8888)
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+        scope.launch {
+            modeName = name
+            if (h > 0) linesTotal = h
+            linesDone = done.coerceAtMost(h.coerceAtLeast(done))
+            if (bmp != null) image = bmp
+            if (r.complete) {
+                status = "解码完成：" + name
+                if (settings.autoSave && bmp != null) {
+                    try {
+                        val label = MediaStoreSaver.saveImage(context, bmp, imageName())
+                        status = "已自动保存解码结果：" + label
+                    } catch (_: Throwable) {
+                    }
+                }
+            } else {
+                status = "解码中：" + name
             }
         }
     }
 
     fun stop() {
         receiving = false
+        fileDecoding = false
         ticker?.cancel()
         ticker = null
         try { capture?.stop() } catch (_: Throwable) {}
         capture = null
         decoder = null
+        robot = null
         freq = 0f
         level = 0f
         if (status.startsWith("解码中") || status.startsWith("正在寻找") || status.startsWith("已识别")) {
@@ -441,6 +575,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         status = "正在解码音频文件…"
         image = null
         lastFrame = null
+        val useRobot = engine == DecodeEngine.Robot36
         scope.launch {
             try {
                 val pcm = withContext(Dispatchers.IO) {
@@ -449,6 +584,23 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                 if (pcm == null || pcm.isEmpty()) {
                     fileDecoding = false
                     status = "无法读取该音频，请改用 WAV 文件"
+                    return@launch
+                }
+                if (useRobot) {
+                    val r = MochiEngine(AudioCapture.SAMPLE_RATE)
+                    r.lockMode(Robot36Modes.nameFor(lockedModeId))
+                    withContext(Dispatchers.Default) {
+                        val chunk = 8192
+                        var i = 0
+                        while (i < pcm.size) {
+                            val n = minOf(chunk, pcm.size - i)
+                            if (r.feed(pcm, i, n)) publishRobot(r)
+                            i += n
+                            if (r.complete) break
+                        }
+                        publishRobot(r)
+                    }
+                    fileDecoding = false
                     return@launch
                 }
                 val dec = Decoder(AudioCapture.SAMPLE_RATE, listener)
@@ -574,6 +726,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         ticker = null
         try { capture?.stop() } catch (_: Throwable) {}
         capture = null
+        robot = null
         status = "接收失败：" + (t.message ?: t.javaClass.simpleName)
     }
 
