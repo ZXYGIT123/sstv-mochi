@@ -573,7 +573,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         val r = robot
         if (r != null) {
             if (engine == DecodeEngine.Raw) {
-                if (r.rawFeed(pcm, count)) publishRaw(r)
+                if (r.rawFeed(pcm, 0, count)) publishRaw(r)
             } else if (r.feed(pcm, 0, count)) {
                 publishRobot(r)
             }
