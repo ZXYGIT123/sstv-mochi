@@ -126,12 +126,6 @@ class SettingsState(context: Context) {
     fun setWatermarkText(text: String) = prefs.setWatermarkText(text)
     fun resetWatermarkText() = prefs.resetWatermarkText()
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
-
-    fun lockedLabel(): String = when {
-        lockedModeId.isEmpty() -> "自动识别 (VIS)"
-        lockedModeId == "hffax" -> "HF Fax"
-        else -> lockedMode()?.name ?: lockedModeId
-    }
 }
 
 /** 编码页：选图、水印、实时播放或导出 WAV */
@@ -411,6 +405,12 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     private var lastFrame: Frame? = null
 
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
+
+    fun lockedLabel(): String = when {
+        lockedModeId.isEmpty() -> "自动识别 (VIS)"
+        lockedModeId == "hffax" -> "HF Fax"
+        else -> lockedMode()?.name ?: lockedModeId
+    }
 
     fun lockOptions(): List<LockOption> {
         val list = ArrayList<LockOption>()
