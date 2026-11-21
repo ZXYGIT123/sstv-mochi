@@ -343,7 +343,20 @@ class EncodeState(val context: Context, val settings: SettingsState) {
 /** 解码引擎：标准（SSTV 套件，16 个模式）/ 高质量（Robot36 的 FFT 解调器，额外支持 HF Fax） */
 enum class DecodeEngine(val label: String, val hint: String) {
     Robot36("Robot36 高质量", "FFT 解调 + 逐行对齐，画质更好，支持 HF Fax"),
-    Standard("标准", "SSTV 套件解码器，16 个模式全支持"),
+    Standard("标准", "SSTV 套件解码器，模式全支持"),
+    Raw("原始扫描 (Raw)", "不做模式识别，逐行把音频画成灰度图，用来盯信号/调台"),
+}
+
+/** 简易信噪比表：跟踪底噪，算峰值/底噪的 dB 差（标准引擎用） */
+class SnrMeter {
+    private var noise = 0f
+    fun reset() { noise = 0f }
+    fun update(level: Float): Float {
+        if (level <= 0f) return 0f
+        noise = if (noise <= 0f) level else noise * 0.9995f + level * 0.0005f
+        val db = 20f * kotlin.math.log10((level + 1e-6f) / (noise + 1e-9f))
+        return db.coerceIn(0f, 60f)
+    }
 }
 
 /** SSTV 模式 id ↔ Robot36 解码器模式名（Robot36 用带空格的英文名） */
@@ -396,6 +409,9 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     var level by mutableFloatStateOf(0f)
     var waterfallTick by mutableIntStateOf(0)
     var lockedModeId by mutableStateOf(settings.lockedModeId)
+    var snr by mutableFloatStateOf(0f)
+    var lostLines by mutableIntStateOf(0)
+    var integrity by mutableFloatStateOf(0f)
 
     private var capture: AudioCapture? = null
     private var decoder: Decoder? = null
@@ -403,6 +419,10 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     private var ticker: Job? = null
     private var lastProgressAt = 0L
     private var lastFrame: Frame? = null
+    private val snrMeter = SnrMeter()
+    private var lastLineCount = 0
+    private var lastLineAt = 0L
+    private var avgLineMs = 0f
 
     fun lockedMode(): SstvMode? = if (lockedModeId.isEmpty()) null else ModeRegistry.byId(lockedModeId)
 
@@ -423,6 +443,12 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         if (next == engine) return
         if (receiving || fileDecoding) stop()
         engine = next
+        if (next == DecodeEngine.Standard && lockedModeId == "hffax") {
+            lockedModeId = ""
+            settings.setLockedModeId("")
+            status = "标准引擎没有 HF Fax，已切回自动识别"
+            return
+        }
         if (next == DecodeEngine.Robot36 && !Robot36Modes.supports(lockedModeId)) {
             lockedModeId = ""
             settings.setLockedModeId("")
@@ -447,11 +473,23 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         linesTotal = 0
         waterfall.clear()
         waterfallTick++
+        snrMeter.reset()
+        lostLines = 0
+        integrity = 0f
+        lastLineCount = 0
+        lastLineAt = 0L
+        avgLineMs = 0f
         if (engine == DecodeEngine.Robot36) {
             val r = MochiEngine(AudioCapture.SAMPLE_RATE)
             r.lockMode(Robot36Modes.nameFor(lockedModeId))
             robot = r
             decoder = null
+        } else if (engine == DecodeEngine.Raw) {
+            val r = MochiEngine(AudioCapture.SAMPLE_RATE)
+            r.resetRaw()
+            robot = r
+            decoder = null
+            linesTotal = MochiEngine.RAW_HEIGHT
         } else {
             val dec = Decoder(AudioCapture.SAMPLE_RATE, listener)
             dec.setLockedMode(lockedMode())
@@ -489,6 +527,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                 if (r != null) {
                     freq = r.peakHz
                     level = r.peakLevel
+                    snr = r.snrDb
                     if (settings.waterfallVisible) {
                         waterfall.addSample(r.peakHz, r.peakLevel)
                         waterfallTick++
@@ -497,11 +536,34 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                     val dec = decoder ?: continue
                     freq = dec.signalFrequency
                     level = dec.signalLevel
+                    snr = snrMeter.update(dec.signalLevel)
                     if (settings.waterfallVisible) {
                         waterfall.addSample(dec.signalFrequency, dec.signalLevel)
                         waterfallTick++
                     }
                 }
+                trackQuality()
+            }
+        }
+    }
+
+    /** 丢行/完整度：靠“多久没出新行”判断同步丢失 */
+    private fun trackQuality() {
+        integrity = if (linesTotal > 0) (linesDone.toFloat() / linesTotal.toFloat()).coerceIn(0f, 1f) else 0f
+        if (engine == DecodeEngine.Raw) return
+        val now = System.currentTimeMillis()
+        if (linesDone > lastLineCount) {
+            val dt = (now - lastLineAt).toFloat()
+            if (lastLineAt > 0L && dt in 150f..6000f) {
+                avgLineMs = if (avgLineMs <= 0f) dt else avgLineMs * 0.7f + dt * 0.3f
+            }
+            lastLineCount = linesDone
+            lastLineAt = now
+        } else if (receiving && lastLineAt > 0L) {
+            val limit = maxOf(500f, avgLineMs * 2.5f)
+            if (now - lastLineAt > limit) {
+                lostLines += 1
+                lastLineAt = now
             }
         }
     }
@@ -510,10 +572,33 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     private fun consume(pcm: ShortArray, count: Int) {
         val r = robot
         if (r != null) {
-            if (r.feed(pcm, 0, count)) publishRobot(r)
+            if (engine == DecodeEngine.Raw) {
+                if (r.rawFeed(pcm, count)) publishRaw(r)
+            } else if (r.feed(pcm, 0, count)) {
+                publishRobot(r)
+            }
             return
         }
         decoder?.feed(pcm, 0, count)
+    }
+
+    /** 原始扫描：每次滚出一行就刷一次图 */
+    private fun publishRaw(r: MochiEngine) {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressAt < 90) return
+        lastProgressAt = now
+        val bmp = try {
+            Bitmap.createBitmap(r.rawPixels, MochiEngine.RAW_WIDTH, MochiEngine.RAW_HEIGHT, Bitmap.Config.ARGB_8888)
+        } catch (_: Throwable) {
+            null
+        }
+        scope.launch {
+            if (bmp != null) image = bmp
+            linesDone = r.rawFilledRows
+            linesTotal = MochiEngine.RAW_HEIGHT
+            modeName = "Raw"
+            status = "原始扫描中（每 0.5 秒一行，黑=1500Hz 白=2300Hz）"
+        }
     }
 
     private fun publishRobot(r: MochiEngine) {
@@ -576,6 +661,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         image = null
         lastFrame = null
         val useRobot = engine == DecodeEngine.Robot36
+        val useRaw = engine == DecodeEngine.Raw
         scope.launch {
             try {
                 val pcm = withContext(Dispatchers.IO) {
@@ -584,6 +670,30 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                 if (pcm == null || pcm.isEmpty()) {
                     fileDecoding = false
                     status = "无法读取该音频，请改用 WAV 文件"
+                    return@launch
+                }
+                if (useRaw) {
+                    val r = MochiEngine(AudioCapture.SAMPLE_RATE)
+                    r.resetRaw()
+                    withContext(Dispatchers.Default) {
+                        val chunk = 8192
+                        var i = 0
+                        while (i < pcm.size) {
+                            val n = minOf(chunk, pcm.size - i)
+                            r.rawFeed(pcm, i, n)
+                            i += n
+                        }
+                        linesDone = r.rawFilledRows
+                        linesTotal = MochiEngine.RAW_HEIGHT
+                        modeName = "Raw"
+                        lastProgressAt = 0L
+                        publishRaw(r)
+                        freq = r.peakHz
+                        level = r.peakLevel
+                        snr = r.snrDb
+                    }
+                    fileDecoding = false
+                    status = "原始扫描完成（" + r.rawFilledRows + " 行）"
                     return@launch
                 }
                 if (useRobot) {

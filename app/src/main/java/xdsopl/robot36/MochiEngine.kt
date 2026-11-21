@@ -23,6 +23,10 @@ class MochiEngine(private val sampleRate: Int) {
     var peakLevel: Float = 0f
         private set
 
+    /** 信噪比（dB）：频带内峰值功率 / 平均功率，EMA 平滑 */
+    var snrDb: Float = 0f
+        private set
+
     val modeName: String get() = decoder.currentMode.getName()
     val width: Int get() = image.width
     val height: Int get() = image.height
@@ -78,9 +82,82 @@ class MochiEngine(private val sampleRate: Int) {
         peakHz = bestBin * binHz
         val db = 10f * kotlin.math.log10(best + 1e-12f)
         peakLevel = ((db + 60f) / 60f).coerceIn(0f, 1f)
+
+        var sum = 0f
+        for (k in lo..hi) sum += power[k]
+        val mean = sum / (hi - lo + 1)
+        val raw = 10f * kotlin.math.log10((best + 1e-12f) / (mean + 1e-12f))
+        snrDb = (snrDb * 0.85f + raw.coerceIn(0f, 60f) * 0.15f)
+    }
+
+    // ---------------- 原始扫描（Robot36 的 RawDecoder 思路） ----------------
+
+    /** 原始扫描图像：每 0.5 s 一行，640 px，灰度 = 瞬时频率 */
+    val rawPixels = IntArray(RAW_WIDTH * RAW_HEIGHT)
+    private val rawDemod = Demodulator(sampleRate)
+    private val rawLineSamples = sampleRate / 2
+    private var rawRow = FloatArray(rawLineSamples)
+    private var rawFill = 0
+    private var rawRowIndex = 0
+    private var rawFreq = FloatArray(0)
+
+    val rawFilledRows: Int get() = rawRowIndex
+
+    /** 送入 PCM，解码出一行就返回 true；图像自下往上滚，最新的行在最下面 */
+    fun rawFeed(buf: ShortArray, off: Int, count: Int): Boolean {
+        if (count <= 0) return false
+        if (rawFreq.size < count) rawFreq = FloatArray(count)
+        val pcm = FloatArray(count)
+        for (i in 0 until count) pcm[i] = buf[off + i] * (1f / 32768f)
+        updateSpectrum(pcm)
+        rawDemod.process(pcm, 0)   // 原地写回归一化频率
+        var produced = false
+        for (i in 0 until count) {
+            rawRow[rawFill++] = pcm[i]
+            if (rawFill >= rawLineSamples) {
+                emitRawRow()
+                rawFill = 0
+                produced = true
+            }
+        }
+        return produced
+    }
+
+    private fun emitRawRow() {
+        if (rawRowIndex < RAW_HEIGHT) {
+            val base = rawRowIndex * RAW_WIDTH
+            for (x in 0 until RAW_WIDTH) {
+                val f = rawRow[(x * rawLineSamples) / RAW_WIDTH]
+                val freq = 1900f + f * 400f
+                val level = ((freq - 1500f) / 800f).coerceIn(0f, 1f)
+                val v = (kotlin.math.sqrt(level) * 255f).toInt().coerceIn(0, 255)
+                rawPixels[base + x] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+            }
+            rawRowIndex++
+            return
+        }
+        // 滚屏：整体上移一行，新行写到最后
+        System.arraycopy(rawPixels, RAW_WIDTH, rawPixels, 0, RAW_WIDTH * (RAW_HEIGHT - 1))
+        val base = (RAW_HEIGHT - 1) * RAW_WIDTH
+        for (x in 0 until RAW_WIDTH) {
+            val f = rawRow[(x * rawLineSamples) / RAW_WIDTH]
+            val freq = 1900f + f * 400f
+            val level = ((freq - 1500f) / 800f).coerceIn(0f, 1f)
+            val v = (kotlin.math.sqrt(level) * 255f).toInt().coerceIn(0, 255)
+            rawPixels[base + x] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+    }
+
+    fun resetRaw() {
+        rawRowIndex = 0
+        rawFill = 0
+        java.util.Arrays.fill(rawPixels, 0xFF101010.toInt())
+        snrDb = 0f
     }
 
     companion object {
+        const val RAW_WIDTH = 640
+        const val RAW_HEIGHT = 616
         /** Robot36 解码器支持的模式名（含 HF Fax） */
         val MODE_NAMES = listOf(
             "Martin 1", "Martin 2",

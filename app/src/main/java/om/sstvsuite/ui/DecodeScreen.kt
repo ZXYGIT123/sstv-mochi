@@ -147,6 +147,18 @@ fun DecodeScreen(state: DecodeState, settings: SettingsState, toast: MochiToastS
                         Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
                     )
                 }
+                if (state.receiving || state.fileDecoding || state.integrity > 0f) {
+                    MochiListRow(
+                        title = "信噪比",
+                        subtitle = if (state.snr < 3f) "还没对准信号" else "峰值与底噪之差",
+                        value = state.snr.toInt().toString() + " dB",
+                    )
+                    MochiListRow(
+                        title = "帧完整性",
+                        subtitle = "丢行 " + state.lostLines + " 行",
+                        value = (state.integrity * 100f).toInt().toString() + " %",
+                    )
+                }
                 if (state.receiving || state.fileDecoding) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),

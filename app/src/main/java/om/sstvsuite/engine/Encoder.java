@@ -210,14 +210,13 @@ public final class Encoder {
             iArr[i26] = 1200;
             iArr2[i26] = round5;
         } else {
-            iArr = new int[3];
-            iArr2 = new int[3];
+            // 没有 VIS 的模式（HF Fax）：只发 300 ms 引导音 + 10 ms 分隔，不再重复一段引导音
+            iArr = new int[2];
+            iArr2 = new int[2];
             iArr[i18] = 1900;
             iArr2[i18] = round3;
             iArr[1] = 1200;
             iArr2[1] = round4;
-            iArr[c5] = 1900;
-            iArr2[c5] = round3;
         }
         this.headerFreq = iArr;
         this.headerLen = iArr2;

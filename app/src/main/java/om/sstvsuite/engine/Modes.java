@@ -26,6 +26,7 @@ final class Modes {
         arrayList.add(pd("pd180", "PD 180", 96, 640, 496, 183.04d));
         arrayList.add(pd("pd240", "PD 240", 97, 640, 496, 244.48d));
         arrayList.add(pd("pd290", "PD 290", 94, 800, 616, 228.8d));
+        arrayList.add(hfFax());
         return arrayList;
     }
 
@@ -77,6 +78,18 @@ final class Modes {
         planBuilder.scan('U', 69.0d);
         LineRun[] build = planBuilder.build();
         return new SstvMode("robot72", "Robot 72", 12, 320, 240, planBuilder.time, new LineRun[][]{build, build}, true);
+    }
+
+    /**
+     * HF Fax（WEFAX）：没有 VIS 头，每行 500 ms —— 25 ms 的 1200 Hz 行同步 + 475 ms 图像，
+     * 图像 1500 Hz(黑) → 2300 Hz(白) 单调调频，640 × 1200 行（与 Robot36 的 HF Fax 解码器对齐）。
+     */
+    private static SstvMode hfFax() {
+        PlanBuilder planBuilder = new PlanBuilder();
+        planBuilder.fixed(1, 25.0d, 1200.0d);
+        planBuilder.scan('Y', 475.0d);
+        LineRun[] build = planBuilder.build();
+        return new SstvMode("hffax", "HF Fax", -1, 640, 1200, planBuilder.time, new LineRun[][]{build}, false);
     }
 
     private static SstvMode pd(String str, String str2, int i, int i2, int i3, double d) {
