@@ -12,8 +12,8 @@ android {
         applicationId = "om.sstvsuite"
         minSdk = 23
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.1.1-robot36"
+        versionCode = 7
+        versionName = "1.1.2-robot36"
     }
 
     signingConfigs {

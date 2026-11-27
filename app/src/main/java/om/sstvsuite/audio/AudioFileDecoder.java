@@ -1,125 +1,82 @@
 package om.sstvsuite.audio;
 
-import android.content.ContentResolver;
 import android.content.Context;
-import android.database.Cursor;
 import android.net.Uri;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Locale;
 import om.sstvsuite.engine.WavIO;
 
-/* loaded from: /home/Gold/Documents/deepseek-harness/default-workspace/sstv/apk/classes7.dex */
+/**
+ * 音频文件解码。
+ *
+ * 说明：原工程里有一个 decodeWithMediaCodec(Context, Uri) 分支（用 MediaCodec 走系统
+ * 解码器，可以吃 mp3/aac/flac 等压缩格式），但那份源码在导出/还原时方法体就丢了，
+ * 1.1.1 的 APK 里它就是个 throw UnsupportedOperationException 的桩。所以本版本
+ * 只支持 WAV（RIFF/PCM 16-bit）——与 1.1.1 的实际行为一致，只是把错误信息透出来。
+ *
+ * 大文件：WavIO.read 已改为按 data 块一次分配 short[]、流式填充（原来是
+ * ByteArrayOutputStream 翻倍扩容 + toByteArray 复制，PD290/HF Fax 那种 28–58MB 的
+ * 文件内存峰值可达 140–300MB，直接 OOM，再被 catch(Throwable) 吞掉，误报
+ * "unsupported audio file"）。如果将来要支持压缩格式，把 decodeWithMediaCodec
+ * 用 MediaCodec/MediaExtractor 实现回来即可。
+ */
 public final class AudioFileDecoder {
-    private static final int MAX_IDLE_LOOPS = 600;
-    private static final long MAX_ITERATIONS = 2000000;
 
     private AudioFileDecoder() {
     }
 
-    public static short[] decodeToMono(Context context, Uri uri, int i) throws IOException {
-        String str;
-        ContentResolver contentResolver = context.getContentResolver();
-        short[] sArr = null;
+    public static short[] decodeToMono(Context context, Uri uri, int targetRate) throws IOException {
+        String mime = null;
         try {
-            str = contentResolver.getType(uri);
-        } catch (Throwable unused) {
-            str = null;
+            mime = context.getContentResolver().getType(uri);
+        } catch (Throwable t) {
+            // 忽略，靠扩展名判断
         }
-        String queryDisplayName = queryDisplayName(context, uri);
-        String lowerCase = queryDisplayName == null ? "" : queryDisplayName.toLowerCase(Locale.ROOT);
-        if ((str != null && (str.contains("wav") || str.contains("x-wav"))) || lowerCase.endsWith(".wav") || lowerCase.endsWith(".wave")) {
+        String name = queryDisplayName(context, uri);
+        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        boolean looksWav = (mime != null && (mime.contains("wav") || mime.contains("x-wav")))
+                || lower.endsWith(".wav") || lower.endsWith(".wave");
+        if (!looksWav) {
+            throw new IOException("只支持 WAV 文件（16-bit PCM），收到的是: "
+                    + (name != null ? name : (mime != null ? mime : "未知类型")));
+        }
+        try {
+            InputStream in = context.getContentResolver().openInputStream(uri);
+            if (in == null) throw new IOException("无法打开文件: " + name);
             try {
-                return readWav(contentResolver, uri, i);
-            } catch (Throwable unused2) {
+                WavIO.Pcm pcm = WavIO.read(in);
+                return WavIO.resampleMono(WavIO.toMono(pcm), pcm.sampleRate, targetRate);
+            } finally {
+                try { in.close(); } catch (Throwable ignored) {}
             }
+        } catch (IOException e) {
+            throw new IOException("WAV 解码失败: " + e.getMessage(), e);
+        } catch (OutOfMemoryError e) {
+            throw new IOException("文件太大，内存不足（" + name + "），请用较短的片段", e);
+        } catch (Throwable t) {
+            android.util.Log.e("SSTVWav", "decode failed", t);
+            throw new IOException("WAV 解码失败: " + t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""), t);
         }
-        try {
-            sArr = decodeWithMediaCodec(context, uri);
-        } catch (Throwable unused3) {
-        }
-        if (sArr != null && sArr.length > 0) {
-            return sArr;
-        }
-        try {
-            return readWav(contentResolver, uri, i);
-        } catch (Throwable th) {
-            throw new IOException("unsupported audio file", th);
-        }
-    }
-
-    private static short[] readWav(ContentResolver contentResolver, Uri uri, int i) throws IOException {
-        InputStream openInputStream = contentResolver.openInputStream(uri);
-        if (openInputStream == null) {
-            throw new IOException("cannot open stream");
-        }
-        try {
-            WavIO.Pcm read = WavIO.read(openInputStream);
-            return WavIO.resampleMono(WavIO.toMono(read), read.sampleRate, i);
-        } finally {
-            try {
-                openInputStream.close();
-            } catch (Throwable unused) {
-            }
-        }
-    }
-
-    /* JADX WARN: Removed duplicated region for block: B:57:0x013f A[Catch: all -> 0x01e7, TryCatch #2 {all -> 0x01e7, blocks: (B:31:0x0071, B:33:0x0088, B:37:0x009b, B:39:0x00a1, B:41:0x00a9, B:44:0x00e1, B:46:0x00e7, B:48:0x00ed, B:50:0x00f1, B:51:0x0103, B:57:0x013f, B:63:0x0148, B:64:0x014f, B:70:0x0114, B:72:0x011e, B:73:0x0122, B:75:0x0128, B:76:0x012c, B:78:0x0134, B:80:0x00b9, B:82:0x00c1, B:83:0x00cd, B:86:0x0155, B:87:0x015c), top: B:30:0x0071 }] */
-    /* JADX WARN: Removed duplicated region for block: B:66:0x0150  */
-    /*
-        Code decompiled incorrectly, please refer to instructions dump.
-        To view partially-correct add '--show-bad-code' argument
-    */
-    private static short[] decodeWithMediaCodec(android.content.Context r27, android.net.Uri r28) throws java.io.IOException {
-        /*
-            Method dump skipped, instructions count: 549
-            To view this dump add '--comments-level debug' option
-        */
-        throw new UnsupportedOperationException("Method not decompiled: om.sstvsuite.audio.AudioFileDecoder.decodeWithMediaCodec(android.content.Context, android.net.Uri):short[]");
-    }
-
-    private static short[] mixToMono(short[] sArr, int i) {
-        if (i <= 1) {
-            return sArr;
-        }
-        int length = sArr.length / i;
-        short[] sArr2 = new short[length];
-        for (int i2 = 0; i2 < length; i2++) {
-            int i3 = 0;
-            for (int i4 = 0; i4 < i; i4++) {
-                i3 += sArr[(i2 * i) + i4];
-            }
-            sArr2[i2] = (short) (i3 / i);
-        }
-        return sArr2;
     }
 
     private static String queryDisplayName(Context context, Uri uri) {
-        int columnIndex;
         try {
-            Cursor query = context.getContentResolver().query(uri, new String[]{"_display_name"}, null, null, null);
-            if (query == null) {
-                return null;
-            }
+            android.database.Cursor c = context.getContentResolver()
+                    .query(uri, new String[]{"_display_name"}, null, null, null);
+            if (c == null) return null;
             try {
-                if (query.moveToFirst() && (columnIndex = query.getColumnIndex("_display_name")) >= 0) {
-                    return query.getString(columnIndex);
+                if (c.moveToFirst()) {
+                    int idx = c.getColumnIndex("_display_name");
+                    if (idx >= 0) return c.getString(idx);
                 }
-                query.close();
                 return null;
             } finally {
-                query.close();
+                c.close();
             }
-        } catch (Throwable unused) {
+        } catch (Throwable t) {
             return null;
-        }
-    }
-
-    private static final class AudioFormatHelper {
-        static final int ENCODING_PCM_16BIT = 2;
-        static final int ENCODING_PCM_FLOAT = 4;
-
-        private AudioFormatHelper() {
         }
     }
 }

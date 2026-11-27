@@ -52,15 +52,29 @@ fun EncodeScreen(state: EncodeState, settings: SettingsState, toast: MochiToastS
     var modeExpanded by remember { mutableStateOf(false) }
     var showWatermark by rememberSaveable { mutableStateOf(false) }
     var showOutput by remember { mutableStateOf(false) }
-    var cameraFile by remember { mutableStateOf<File?>(null) }
-    var cameraUri by remember { mutableStateOf<Uri?>(null) }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+    // 系统媒体选择器（Photo Picker）：Android 13+ 系统自带、体验一致；
+    // 老版本由 activity 库自动回退到 OPEN_DOCUMENT 式选择。不需要 READ_MEDIA_IMAGES 权限。
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) state.loadImage(uri)
     }
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok: Boolean ->
-        val uri = cameraUri
-        if (ok && uri != null) state.loadImage(uri)
+    // 拍照：Android 10+ 走 MediaStore pending 条目（系统相册公共存储，兼容所有 ROM 相机）；
+    // Android 9- 走无 EXTRA_OUTPUT 的缩略图方案（画质低但稳）。
+    // pendingUri 在 launch 前创建，契约返回时统一处理收尾。
+    val cameraContract = remember { TakePictureGranted() }
+    var photoTimestamp by remember { mutableStateOf(0L) }
+    val camera = rememberLauncherForActivityResult(cameraContract) { result: TakePictureGranted.Result ->
+        when {
+            // 相机在返回 Intent 里带了图（部分 ROM 行为）
+            result.thumb != null -> state.loadBitmap(result.thumb)
+            // MIUI：相机自己把照片存进相册，扫最近 30 秒新增的照片
+            else -> {
+                val window = if (photoTimestamp > 0) System.currentTimeMillis() - photoTimestamp + 5000 else 30_000L
+                val recent = TakePictureGranted.findRecentPhoto(context, window)
+                if (recent != null) state.loadImage(recent)
+                else toast.show("拍照返回但没有图片")
+            }
+        }
+        photoTimestamp = 0L
     }
 
     MochiLazyLargeTitleScaffold(
@@ -94,18 +108,20 @@ fun EncodeScreen(state: EncodeState, settings: SettingsState, toast: MochiToastS
                     Modifier.fillMaxWidth().padding(top = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    MochiButton(onClick = { picker.launch(arrayOf("image/*")) }) {
+                    MochiButton(onClick = {
+                        picker.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                            )
+                        )
+                    }) {
                         MochiIonicon("images")
                         Text("  选择图片")
                     }
                     MochiButton(onClick = {
                         try {
-                            val dir = File(context.cacheDir, "camera").also { it.mkdirs() }
-                            val f = File(dir, "shot_" + System.currentTimeMillis() + ".jpg")
-                            val uri = FileShare.cameraOutputUri(context, f)
-                            cameraFile = f
-                            cameraUri = uri
-                            camera.launch(uri)
+                            photoTimestamp = System.currentTimeMillis()
+                            camera.launch(null)
                         } catch (t: Throwable) {
                             toast.show("没有可用的相机应用")
                         }

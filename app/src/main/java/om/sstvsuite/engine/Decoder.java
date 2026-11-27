@@ -227,10 +227,16 @@ public final class Decoder {
         }
         this.endOfStream = CSMOOTH_WIDE;
         processAvailable();
-        if (this.complete || this.image == null || this.linesDone < this.height) {
+        // PD 系模式按"发射行"计数（transmitLines = height/2），linesDone 永远到不了
+        // height，locked 模式下文件解码到 EOF 会在这里差 8 行判不完成。
+        // image 已存在且行数达到 transmitLines 即视为完成。
+        if (this.complete || this.image == null) {
             return;
         }
-        finishImage();
+        if (this.linesDone >= this.height
+                || (this.geom != null && this.linesDone >= this.geom.transmitLines)) {
+            finishImage();
+        }
     }
 
     public boolean isComplete() {

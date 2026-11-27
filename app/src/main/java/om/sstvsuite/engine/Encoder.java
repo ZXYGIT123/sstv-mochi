@@ -157,7 +157,6 @@ public final class Encoder {
                 } else {
                     c2 = 'Y';
                 }
-                iArr6[i4] = i15;
                 c = c2;
                 i4 = i17;
                 d = d2;

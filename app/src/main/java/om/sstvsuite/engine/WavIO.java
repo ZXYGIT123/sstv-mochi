@@ -52,7 +52,12 @@ public final class WavIO {
             if (bArr[2] == 70) {
                 char c2 = 3;
                 if (bArr[3] == 70 && bArr[8] == 87 && bArr[9] == 65 && bArr[10] == 86 && bArr[11] == 69) {
-                    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                    // 直接按 data 块大小分配 short[]，流式填充。
+                    // 旧实现先堆进 ByteArrayOutputStream（扩容翻倍，PD290/HF Fax 的大文件峰值上百 MB）
+                    // 再复制成 short[]，大文件直接 OOM，被上层 catch 吞掉后误报"unsupported audio file"。
+                    short[] accumulated = null;
+                    int accumulatedCount = 0;
+                    int pendingSkip = 0;
                     byte[] bArr2 = new byte[8];
                     int i = AudioCapture.SAMPLE_RATE;
                     int i2 = 1;
@@ -62,7 +67,10 @@ public final class WavIO {
                         char c3 = c;
                         char c4 = c2;
                         int i4 = ((bArr2[5] & 255) << 8) | (bArr2[4] & 255) | ((bArr2[6] & 255) << 16) | ((bArr2[7] & 255) << 24);
-                        if (i4 < 0) {
+                        // 注意：i4 为负（0x80000000 以上，如 0xFFFFFFFF 流式标记或损坏值）不再直接
+                        // break——那是旧实现丢 data 块的元凶之一。data 分支里有 unknownSize 处理；
+                        // 其他块遇到负大小没法安全跳过，此时才退出循环。
+                        if (i4 < 0 && !str.equals("data")) {
                             break;
                         }
                         if (str.equals("fmt ")) {
@@ -82,15 +90,62 @@ public final class WavIO {
                             i3 = i7;
                             i = i6;
                         } else if (str.equals("data")) {
+                            // 非法 data 大小：0xFFFFFFFF（流式标记）、损坏文件的高位为 1 的值等。
+                            // 统一当"未知大小"处理——流式读到 EOF，每 1M 样本扩一次容。
+                            // 负数直接 new short[i4/2] 会抛 NegativeArraySizeException。
+                            final int MAX_SAMPLES = 200_000_000; // ≈ 400MB PCM，足够 PD290/HF Fax
+                            boolean unknownSize = i4 < 0 || i4 == 0xFFFFFFFF;
+                            if (unknownSize) {
+                                // 读到 EOF 为止；while 循环用 i8>0 判断，Integer.MAX_VALUE 够大
+                                i4 = Integer.MAX_VALUE - 1;
+                            }
+                            if ((i4 & 1) != 0) {
+                                throw new IOException("odd data chunk: " + i4);
+                            }
+                            int need = unknownSize ? 65536 : i4 / 2; // 未知大小时先给个初始容量，读满再扩
+                            if (need > MAX_SAMPLES) {
+                                throw new IOException("WAV data too large: " + need + " samples");
+                            }
+                            if (accumulated == null) {
+                                accumulated = new short[Math.max(need, 1)];
+                                accumulatedCount = 0;
+                            } else if (!unknownSize && accumulatedCount + need > accumulated.length) {
+                                int grow = accumulatedCount + need;
+                                if (grow > MAX_SAMPLES) grow = MAX_SAMPLES;
+                                short[] bigger = new short[grow];
+                                System.arraycopy(accumulated, 0, bigger, 0, accumulatedCount);
+                                accumulated = bigger;
+                            }
                             byte[] bArr4 = new byte[8192];
                             int i8 = i4;
                             while (i8 > 0) {
-                                int read = inputStream.read(bArr4, 0, Math.min(8192, i8));
+                                int read = inputStream.read(bArr4, 0, Math.min(8192, Math.min(i8, bArr4.length)));
                                 if (read <= 0) {
+                                    break; // EOF：未知大小时自然结束
+                                }
+                                if (accumulatedCount + read / 2 > accumulated.length) {
+                                    // 动态扩容（未知大小时走到这里）
+                                    int grow = Math.max(accumulated.length * 2, accumulatedCount + read / 2);
+                                    if (grow > MAX_SAMPLES) grow = MAX_SAMPLES;
+                                    if (grow > accumulated.length) {
+                                        short[] bigger = new short[grow];
+                                        System.arraycopy(accumulated, 0, bigger, 0, accumulatedCount);
+                                        accumulated = bigger;
+                                    }
+                                }
+                                for (int p = 0; p + 1 < read; p += 2) {
+                                    accumulated[accumulatedCount++] = (short) ((bArr4[p + 1] << 8) | (bArr4[p] & 255));
+                                }
+                                if ((read & 1) != 0) {
+                                    pendingSkip = 1;
+                                    i8 -= read;
                                     break;
                                 }
-                                byteArrayOutputStream.write(bArr4, 0, read);
                                 i8 -= read;
+                            }
+                            if (pendingSkip != 0) {
+                                skipFully(inputStream, 1L);
+                                pendingSkip = 0;
                             }
                         } else {
                             skipFully(inputStream, i4);
@@ -104,14 +159,15 @@ public final class WavIO {
                     if (i3 != 16) {
                         throw new IOException("only 16-bit PCM supported, got " + i3);
                     }
-                    byte[] byteArray = byteArrayOutputStream.toByteArray();
-                    int length = byteArray.length / 2;
-                    short[] sArr = new short[length];
-                    for (int i9 = 0; i9 < length; i9++) {
-                        int i10 = i9 * 2;
-                        sArr[i9] = (short) ((byteArray[i10 + 1] << 8) | (byteArray[i10] & 255));
+                    if (accumulated == null) {
+                        throw new IOException("no data chunk");
                     }
-                    return new Pcm(sArr, i, i2);
+                    if (accumulatedCount != accumulated.length) {
+                        short[] exact = new short[accumulatedCount];
+                        System.arraycopy(accumulated, 0, exact, 0, accumulatedCount);
+                        accumulated = exact;
+                    }
+                    return new Pcm(accumulated, i, i2);
                 }
             }
         }
@@ -186,9 +242,13 @@ public final class WavIO {
         if (i == i2) {
             return sArr;
         }
-        int length = (int) ((sArr.length * i2) / i);
+        // sArr.length * i2 用 int 乘会溢出（PD120 6M 样本 × 44100 ≈ 2.7e11），
+        // 得到负数长度 → new short[负数] 抛 NegativeArraySizeException。必须用 long。
+        int length = (int) (((long) sArr.length * i2) / i);
         short[] sArr2 = new short[length];
-        double d = i / i2;
+        // i / i2 是 int 整数除法，48000/44100 恒等于 1——重采样步进错误，
+        // 等于把音频拉长 8.8%，SSTV 频率整体下移 8%，解码必然失败。必须浮点除。
+        double d = (double) i / i2;
         double d2 = 0.0d;
         for (int i3 = 0; i3 < length; i3++) {
             float f = (float) (d2 - ((int) d2));

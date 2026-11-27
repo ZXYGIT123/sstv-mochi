@@ -170,6 +170,13 @@ class EncodeState(val context: Context, val settings: SettingsState) {
         }
     }
 
+    /** Android 9- 相机缩略图路径：直接拿返回 Intent 里的 Bitmap */
+    fun loadBitmap(bmp: Bitmap?) {
+        if (bmp == null) return
+        source = bmp
+        refreshPreview()
+    }
+
     fun refreshPreview() {
         val src = source
         if (src == null) {
@@ -435,7 +442,9 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     fun lockOptions(): List<LockOption> {
         val list = ArrayList<LockOption>()
         modes.forEach { list.add(LockOption(it.id, it.name, it.width.toString() + " × " + it.height)) }
-        if (engine == DecodeEngine.Robot36) list.add(LockOption("hffax", "HF Fax", "640 × 1200"))
+        // HF Fax 没有 VIS 头，只能手动锁定；标准引擎自带 hfFax 模式，Robot36 引擎的
+        // 解调器只认 5/9/20 ms 同步，25 ms 的传真同步会被丢弃，所以统一走标准引擎。
+        if (list.none { it.id == "hffax" }) list.add(LockOption("hffax", "HF Fax", "640 × 1200"))
         return list
     }
 
@@ -443,12 +452,6 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         if (next == engine) return
         if (receiving || fileDecoding) stop()
         engine = next
-        if (next == DecodeEngine.Standard && lockedModeId == "hffax") {
-            lockedModeId = ""
-            settings.setLockedModeId("")
-            status = "标准引擎没有 HF Fax，已切回自动识别"
-            return
-        }
         if (next == DecodeEngine.Robot36 && !Robot36Modes.supports(lockedModeId)) {
             lockedModeId = ""
             settings.setLockedModeId("")
@@ -458,6 +461,10 @@ class DecodeState(val context: Context, val settings: SettingsState) {
     }
 
     fun lockMode(id: String) {
+        // 选 HF Fax 时自动切到标准引擎（Robot36 引擎解不了 25 ms 同步）
+        if (id == "hffax" && engine != DecodeEngine.Standard) {
+            selectEngine(DecodeEngine.Standard)
+        }
         lockedModeId = id
         settings.setLockedModeId(id)
         decoder?.setLockedMode(lockedMode())
@@ -660,8 +667,20 @@ class DecodeState(val context: Context, val settings: SettingsState) {
         status = "正在解码音频文件…"
         image = null
         lastFrame = null
-        val useRobot = engine == DecodeEngine.Robot36
-        val useRaw = engine == DecodeEngine.Raw
+        // 与 lockMode() 的规则保持一致：hffax 必须走标准引擎（Robot36 引擎的
+        // 解调器认不出 25 ms 传真同步，解出来是黑屏）。
+        // 另外：Robot36 引擎在"自动识别"下对 PD 系（20 ms 同步）识别不出、
+        // 文件解码会永远 0 行，所以文件解码时自动识别也统一走标准引擎。
+        // 注意用 settings.lockedModeId（设置页实时值），DecodeState 的副本只在
+        // 解码页操作时更新，设置页改动后不同步。
+        val effectiveLockedId = settings.lockedModeId
+        val effectiveEngine = when {
+            effectiveLockedId == "hffax" -> DecodeEngine.Standard
+            effectiveLockedId.isEmpty() -> DecodeEngine.Standard
+            else -> engine
+        }
+        val useRobot = effectiveEngine == DecodeEngine.Robot36
+        val useRaw = effectiveEngine == DecodeEngine.Raw
         scope.launch {
             try {
                 val pcm = withContext(Dispatchers.IO) {
@@ -698,7 +717,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                 }
                 if (useRobot) {
                     val r = MochiEngine(AudioCapture.SAMPLE_RATE)
-                    r.lockMode(Robot36Modes.nameFor(lockedModeId))
+                    r.lockMode(Robot36Modes.nameFor(effectiveLockedId))
                     withContext(Dispatchers.Default) {
                         val chunk = 8192
                         var i = 0
@@ -714,7 +733,7 @@ class DecodeState(val context: Context, val settings: SettingsState) {
                     return@launch
                 }
                 val dec = Decoder(AudioCapture.SAMPLE_RATE, listener)
-                dec.setLockedMode(lockedMode())
+                dec.setLockedMode(if (effectiveLockedId.isEmpty()) null else ModeRegistry.byId(effectiveLockedId))
                 withContext(Dispatchers.Default) {
                     val chunk = 8192
                     var i = 0
