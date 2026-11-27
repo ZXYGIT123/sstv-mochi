@@ -18,10 +18,17 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file("sstv-mochi.jks")
-            storePassword = "sstvmochi"
-            keyAlias = "sstv"
-            keyPassword = "sstvmochi"
+            // 密钥不进仓库。本地把 sstv-mochi.jks 放在仓库根目录即可（.gitignore 已排除）；
+            // CI 从 secret 还原到 runner 临时目录，再通过 SSTV_KEYSTORE_PATH 指过来。
+            val envPath = System.getenv("SSTV_KEYSTORE_PATH")
+            val ksFile = if (envPath != null) file(envPath) else rootProject.file("sstv-mochi.jks")
+            storeFile = ksFile
+            storePassword = System.getenv("SSTV_KEYSTORE_PASSWORD") ?: "sstvmochi"
+            keyAlias = System.getenv("SSTV_KEY_ALIAS") ?: "sstv"
+            keyPassword = System.getenv("SSTV_KEY_PASSWORD") ?: "sstvmochi"
+            if (!ksFile.exists()) {
+                logger.warn("签名密钥不存在: ${ksFile.absolutePath} —— assembleRelease 会失败")
+            }
         }
     }
 

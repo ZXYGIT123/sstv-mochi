@@ -4,3 +4,7 @@ build/
 */build/
 *.iml
 .idea/
+
+# 签名密钥不入库
+*.jks
+*.keystore
